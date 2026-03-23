@@ -97,8 +97,6 @@ export default function OfficePage() {
   // Build office layout and characters
   const [chars, setChars] = createSignal<Character[]>([])
   const [office, setOffice] = createSignal<Office>(layout(1))
-  const deskMap = new Map<string, number>()
-  let nextDesk = 0
 
   function doorPos(off: Office) {
     return { x: Math.floor(off.width / 2), y: off.height - TILE / 2 }
@@ -111,16 +109,10 @@ export default function OfficePage() {
     const door = doorPos(off)
     const time = (Date.now() - start) / 1000
 
-    // Assign stable desk index per agent ID
-    for (const agent of list) {
-      if (!deskMap.has(agent.id)) {
-        deskMap.set(agent.id, nextDesk++)
-      }
-    }
-
     setChars((existing) => {
-      return list.map((agent) => {
-        const idx = deskMap.get(agent.id)! % off.desks.length
+      return list.map((agent, i) => {
+        // Desk 0 = CEO, desks 1+ = workers (matches agents array order)
+        const idx = Math.min(i, off.desks.length - 1)
         const desk = off.desks[idx]
         const dx = desk?.x ?? TILE * 2
         const dy = (desk?.y ?? TILE * 2) + 16

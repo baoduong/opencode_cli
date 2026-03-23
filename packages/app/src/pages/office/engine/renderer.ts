@@ -47,7 +47,7 @@ export interface Office {
 
 // Preload tile and furniture images
 const FLOOR = img("/office/floor.png")
-const WALL = img("/office/wall.png")
+const WALL = img("/office/wall.png") // kept for potential future use
 const DESK = img("/office/desk.png")
 const PC_ON = img("/office/pc_on.png")
 const PC_OFF = img("/office/pc_off.png")
@@ -103,16 +103,16 @@ export function layout(count: number): Office {
   const cols = Math.min(workers, 4)
   const rows = Math.ceil(workers / cols)
   const gap = 3
-  const w = Math.max(cols * gap + 5, 10)
-  const h = Math.max(rows * gap + 7, 9)
+  const w = Math.max(cols * gap + 5, 12)
+  const h = Math.max(rows * gap + 5, 7)
   const desks: Desk[] = []
 
   // CEO desk: top center, facing down toward the team
-  desks.push({ x: Math.floor(w / 2) * TILE + TILE / 2, y: 3 * TILE })
+  desks.push({ x: Math.floor(w / 2) * TILE + TILE / 2, y: TILE * 2 + 16 })
 
-  // Worker desks: rows below CEO
+  // Worker desks: rows below CEO with less gap
   const ox = Math.floor((w - cols * gap) / 2) + 1
-  const oy = 5
+  const oy = 4
   for (let i = 0; i < workers; i++) {
     const col = i % cols
     const row = Math.floor(i / cols)
@@ -120,7 +120,7 @@ export function layout(count: number): Office {
   }
 
   const decorations: Office["decorations"] = []
-  if (count > 2) decorations.push({ x: TILE * 2, y: (h - 2) * TILE, type: "cat" })
+  if (count > 2) decorations.push({ x: TILE + 16, y: (h - 1) * TILE - 16, type: "cat" })
   return { width: w * TILE, height: h * TILE, desks, decorations }
 }
 
@@ -154,44 +154,55 @@ export function render(
 
   // Floor tiles
   if (ready(FLOOR)) {
-    for (let y = 0; y < h; y += 16) {
-      for (let x = 0; x < w; x += 16) {
+    for (let y = TILE * 2; y < h - TILE; y += 16) {
+      for (let x = TILE; x < w - TILE; x += 16) {
         ctx.drawImage(FLOOR, x, y)
       }
     }
   }
 
-  // Top wall — 2 tiles high using wall.png (64×128), tile the top-left 16×16 portion
-  if (ready(WALL)) {
-    for (let y = 0; y < TILE * 2; y += 16) {
-      for (let x = 0; x < w; x += 16) {
-        ctx.drawImage(WALL, 0, y, 16, 16, x, y, 16, 16)
-      }
-    }
-  }
+  // Walls — solid colored with subtle brick pattern
+  const wallTop = "#6b5b4f"
+  const wallDark = "#5a4a3e"
+  const wallLight = "#7d6d5f"
 
-  // Side walls — 1 tile wide
-  if (ready(WALL)) {
-    for (let y = TILE * 2; y < h - TILE; y += 16) {
-      ctx.drawImage(WALL, 0, 0, 16, 16, 0, y, 16, 16)
-      ctx.drawImage(WALL, 0, 0, 16, 16, 16, y, 16, 16)
-      ctx.drawImage(WALL, 0, 0, 16, 16, w - TILE, y, 16, 16)
-      ctx.drawImage(WALL, 0, 0, 16, 16, w - 16, y, 16, 16)
+  // Top wall (2 tiles high)
+  ctx.fillStyle = wallTop
+  ctx.fillRect(0, 0, w, TILE * 2)
+  // Brick pattern on top wall
+  for (let row = 0; row < 4; row++) {
+    const offset = row % 2 === 0 ? 0 : 8
+    ctx.fillStyle = wallDark
+    for (let x = offset; x < w; x += 16) {
+      ctx.fillRect(x, row * 8, 1, 8)
     }
+    ctx.fillStyle = wallLight
+    ctx.fillRect(0, row * 8, w, 1)
   }
+  // Baseboard
+  ctx.fillStyle = "#4a3a2e"
+  ctx.fillRect(0, TILE * 2 - 3, w, 3)
+
+  // Side walls (1 tile wide)
+  ctx.fillStyle = wallTop
+  ctx.fillRect(0, TILE * 2, TILE, h - TILE * 3)
+  ctx.fillRect(w - TILE, TILE * 2, TILE, h - TILE * 3)
+  // Side baseboards
+  ctx.fillStyle = "#4a3a2e"
+  ctx.fillRect(TILE - 3, TILE * 2, 3, h - TILE * 3)
+  ctx.fillRect(w - TILE, TILE * 2, 3, h - TILE * 3)
 
   // Bottom wall with door opening
   const doorX = Math.floor(w / 2)
-  if (ready(WALL)) {
-    for (let x = 0; x < w; x += 16) {
-      if (x < doorX - TILE || x >= doorX + TILE) {
-        ctx.drawImage(WALL, 0, 0, 16, 16, x, h - TILE, 16, 16)
-        ctx.drawImage(WALL, 0, 0, 16, 16, x, h - 16, 16, 16)
-      }
-    }
-  }
+  ctx.fillStyle = wallTop
+  ctx.fillRect(0, h - TILE, doorX - TILE, TILE)
+  ctx.fillRect(doorX + TILE, h - TILE, w - doorX - TILE, TILE)
+  // Baseboard on bottom
+  ctx.fillStyle = "#4a3a2e"
+  ctx.fillRect(0, h - TILE, doorX - TILE, 3)
+  ctx.fillRect(doorX + TILE, h - TILE, w - doorX - TILE, 3)
 
-  // Door opening (procedural — no sprite)
+  // Door opening
   ctx.fillStyle = "#3a2a1a"
   ctx.fillRect(doorX - TILE - 2, h - TILE, 4, TILE)
   ctx.fillRect(doorX + TILE - 2, h - TILE, 4, TILE)
@@ -244,26 +255,28 @@ export function render(
 }
 
 function drawWallDecor(ctx: CanvasRenderingContext2D, w: number, h: number, _time: number) {
-  // Top wall decorations (on the wall, above desks)
-  sprite(ctx, WHITEBOARD, TILE * 2, TILE * 2 - 32)
-  sprite(ctx, CLOCK, Math.floor(w / 2) - 8, TILE - 16)
-  sprite(ctx, PAINTING, w - TILE * 3, TILE - 16)
-  sprite(ctx, BOOKSHELF, w - TILE * 3, TILE * 2 - 16)
+  // Top wall: whiteboard left, clock center, painting right
+  sprite(ctx, WHITEBOARD, TILE + 8, TILE * 2 - 32)
+  sprite(ctx, CLOCK, Math.floor(w / 2) - 8, 4)
+  sprite(ctx, PAINTING, w - TILE * 2 - 16, 4)
 
-  // Left wall decorations
-  sprite(ctx, LARGE_PLANT, TILE + 4, TILE * 2 + 8)
+  // Against top wall: bookshelf
+  sprite(ctx, BOOKSHELF, w - TILE * 2 - 8, TILE * 2 - 16)
 
-  // Right wall decorations
-  sprite(ctx, PLANT, w - TILE - 8, TILE * 2 + 8)
-  sprite(ctx, CACTUS, w - TILE - 4, h - TILE * 2 - 16)
+  // Left wall corners
+  sprite(ctx, LARGE_PLANT, TILE + 2, TILE * 2 + 4)
 
-  // Bottom area (near door) — break area on the left
-  sprite(ctx, SOFA, TILE + 8, h - TILE - 20)
-  sprite(ctx, COFFEE_TABLE, TILE + 44, h - TILE - 20)
-  sprite(ctx, COFFEE, TILE + 50, h - TILE - 36)
+  // Right wall
+  sprite(ctx, CACTUS, w - TILE - 6, TILE * 2 + 4)
+  sprite(ctx, PLANT, w - TILE - 10, h - TILE - 32)
 
-  // Bin near door on the right
-  sprite(ctx, BIN, doorX(w) + TILE + 12, h - TILE - 16)
+  // Bottom left: break area
+  sprite(ctx, SOFA, TILE + 4, h - TILE - 16)
+  sprite(ctx, COFFEE_TABLE, TILE + 40, h - TILE - 16)
+  sprite(ctx, COFFEE, TILE + 46, h - TILE - 32)
+
+  // Bottom right: bin
+  sprite(ctx, BIN, w - TILE - 10, h - TILE - 12)
 }
 
 function doorX(w: number): number {
