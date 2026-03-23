@@ -98,21 +98,27 @@ function sprite(ctx: CanvasRenderingContext2D, el: HTMLImageElement, x: number, 
 }
 
 export function layout(count: number): Office {
-  const actual = Math.max(count, 2)
-  const cols = Math.min(actual, 4)
-  const rows = Math.ceil(actual / cols)
-  const pad = 3
+  // First desk is CEO (orchestrator), rest are workers
+  const workers = Math.max(count - 1, 1)
+  const cols = Math.min(workers, 4)
+  const rows = Math.ceil(workers / cols)
   const gap = 3
-  const w = Math.max(cols * gap + pad + 2, 10)
-  const h = Math.max(rows * gap + pad + 3, 8)
+  const w = Math.max(cols * gap + 5, 10)
+  const h = Math.max(rows * gap + 7, 9)
   const desks: Desk[] = []
+
+  // CEO desk: top center, facing down toward the team
+  desks.push({ x: Math.floor(w / 2) * TILE + TILE / 2, y: 3 * TILE })
+
+  // Worker desks: rows below CEO
   const ox = Math.floor((w - cols * gap) / 2) + 1
-  const oy = 3
-  for (let i = 0; i < actual; i++) {
+  const oy = 5
+  for (let i = 0; i < workers; i++) {
     const col = i % cols
     const row = Math.floor(i / cols)
     desks.push({ x: (col * gap + ox) * TILE + TILE / 2, y: (row * gap + oy) * TILE })
   }
+
   const decorations: Office["decorations"] = []
   if (count > 2) decorations.push({ x: TILE * 2, y: (h - 2) * TILE, type: "cat" })
   return { width: w * TILE, height: h * TILE, desks, decorations }
@@ -201,8 +207,16 @@ export function render(
     drawDecoration(ctx, dec.x, dec.y, dec.type, time)
   }
 
-  // Desks
-  for (const desk of office.desks) {
+  // CEO desk (index 0) — special rendering
+  if (office.desks.length > 0) {
+    const ceo = office.desks[0]
+    const busy = chars.some((c) => Math.abs(c.tx - ceo.x) < 4 && Math.abs(c.ty - ceo.y - 16) < 4 && c.agent.status === "busy")
+    drawCeoDesk(ctx, ceo.x, ceo.y, busy)
+  }
+
+  // Worker desks (index 1+)
+  for (let i = 1; i < office.desks.length; i++) {
+    const desk = office.desks[i]
     const busy = chars.some((c) => Math.abs(c.tx - desk.x) < 4 && Math.abs(c.ty - desk.y - 16) < 4 && c.agent.status === "busy")
     drawDesk(ctx, desk.x, desk.y, busy)
   }
@@ -254,6 +268,23 @@ function drawWallDecor(ctx: CanvasRenderingContext2D, w: number, h: number, _tim
 
 function doorX(w: number): number {
   return Math.floor(w / 2)
+}
+
+function drawCeoDesk(ctx: CanvasRenderingContext2D, x: number, y: number, _active: boolean) {
+  // CEO has a bigger desk, no laptop — just overseeing the team
+  sprite(ctx, DESK, x - 24, y - 8)
+  // Chair behind desk (CEO faces down toward team)
+  sprite(ctx, CHAIR, x - 8, y - 28)
+  // Coffee on desk (CEO drinks coffee and watches)
+  sprite(ctx, COFFEE, x + 8, y - 24)
+  // Plant on left side of CEO area
+  sprite(ctx, PLANT, x - 48, y - 24)
+
+  // Gold nameplate under desk
+  ctx.fillStyle = "#daa520"
+  ctx.fillRect(x - 16, y + 24, 32, 3)
+  ctx.fillStyle = "#b8860b"
+  ctx.fillRect(x - 15, y + 25, 30, 1)
 }
 
 function drawDesk(ctx: CanvasRenderingContext2D, x: number, y: number, active: boolean) {
