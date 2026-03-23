@@ -32,11 +32,7 @@ export namespace Database {
       if (path.isAbsolute(Flag.OPENCODE_DB)) return Flag.OPENCODE_DB
       return path.join(Global.Path.data, Flag.OPENCODE_DB)
     }
-    const channel = Installation.CHANNEL
-    if (["latest", "beta"].includes(channel) || Flag.OPENCODE_DISABLE_CHANNEL_DB)
-      return path.join(Global.Path.data, "opencode.db")
-    const safe = channel.replace(/[^a-zA-Z0-9._-]/g, "-")
-    return path.join(Global.Path.data, `opencode-${safe}.db`)
+    return path.join(Global.Path.data, "opencode.db")
   })
 
   export type Transaction = SQLiteTransaction<"sync", void>
