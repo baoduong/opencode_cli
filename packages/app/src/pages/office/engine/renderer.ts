@@ -1,4 +1,4 @@
-import { TILE, CHAR_W, CHAR_H, type Sprite, type CharacterState } from "./sprites"
+import { TILE, CHAR_W, CHAR_H, type CharacterState } from "./sprites"
 
 export interface Agent {
   id: string
@@ -19,6 +19,18 @@ export interface Character {
   timer: number
   state: CharacterState
   palette: number
+  spawn: number // timestamp when spawned (for pop-in)
+  facing: number // 1 = right, -1 = left
+  hop: number // bounce offset for celebration
+}
+
+export interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  life: number
+  color: string
 }
 
 export interface Desk {
@@ -78,10 +90,26 @@ export function layout(count: number): Office {
   return { width: w * TILE, height: h * TILE, desks, decorations }
 }
 
+export function spawnParticles(particles: Particle[], x: number, y: number) {
+  const colors = ["#ff4466", "#44cc88", "#ffcc44", "#4488ff", "#ff88ff", "#88ffcc"]
+  for (let i = 0; i < 7; i++) {
+    const angle = (Math.PI * 2 * i) / 7 + Math.random() * 0.5
+    particles.push({
+      x,
+      y: y - 8,
+      vx: Math.cos(angle) * (30 + Math.random() * 20),
+      vy: Math.sin(angle) * (30 + Math.random() * 20) - 20,
+      life: 0.6 + Math.random() * 0.4,
+      color: colors[i % colors.length],
+    })
+  }
+}
+
 export function render(
   ctx: CanvasRenderingContext2D,
   office: Office,
   chars: Character[],
+  particles: Particle[],
   time: number,
   hover: number,
   scale: number,
@@ -104,6 +132,10 @@ export function render(
   ctx.fillRect(0, 0, TILE, h)
   ctx.fillRect(w - TILE, 0, TILE, h)
 
+  // Door opening on bottom wall
+  ctx.fillStyle = COLORS.floor[0]
+  ctx.fillRect(Math.floor(w / 2) - TILE, h - TILE, TILE * 2, TILE)
+
   // Decorations
   for (const dec of office.decorations) {
     drawDecoration(ctx, dec.x, dec.y, dec.type, time)
@@ -113,14 +145,22 @@ export function render(
   const sorted = [...chars].sort((a, b) => a.y - b.y)
   for (const char of sorted) {
     const desk = office.desks.find((d) => d.x === char.tx && d.y === char.ty)
-    if (desk) drawDesk(ctx, desk.x, desk.y, char.agent.status === "busy")
-    drawCharacter(ctx, char, time, hover === chars.indexOf(char))
+    if (desk && char.state !== "walking") drawDesk(ctx, desk.x, desk.y, char.agent.status === "busy")
+    if (char.state === "walking") {
+      drawWalkingCharacter(ctx, char, time)
+    } else {
+      drawCharacter(ctx, char, time, hover === chars.indexOf(char))
+    }
   }
+
+  // Particles
+  drawParticles(ctx, particles)
 
   // Labels
   for (let i = 0; i < chars.length; i++) {
-    const char = chars[i]
-    drawLabel(ctx, char, i === hover, scale)
+    const c = chars[i]
+    if (c.state === "walking") continue
+    drawLabel(ctx, c, i === hover, scale)
   }
 }
 
@@ -149,9 +189,73 @@ function drawDesk(ctx: CanvasRenderingContext2D, x: number, y: number, active: b
   ctx.fillRect(x - 1, y - 4, 2, 2)
 }
 
-function drawCharacter(ctx: CanvasRenderingContext2D, char: Character, time: number, hovered: boolean) {
+function drawWalkingCharacter(ctx: CanvasRenderingContext2D, char: Character, time: number) {
   const x = char.x
   const y = char.y
+  const p = char.palette % COLORS.skin.length
+
+  // Pop-in scale
+  const age = time - char.spawn
+  const pop = age < 0.3 ? age / 0.3 : 1
+
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(char.facing * pop, pop)
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.15)"
+  ctx.beginPath()
+  ctx.ellipse(0, CHAR_H / 2 + 2, 6, 2, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Leg animation — alternating stride
+  const stride = Math.sin(time * 10) * 3
+  ctx.fillStyle = "#334"
+  ctx.fillRect(-3, 4, 3, 8)
+  ctx.fillRect(0, 4, 3, 8)
+  // Offset legs
+  ctx.fillRect(-3 + stride, 10, 3, 3)
+  ctx.fillRect(0 - stride, 10, 3, 3)
+
+  // Body
+  ctx.fillStyle = COLORS.shirt[p % COLORS.shirt.length]
+  ctx.fillRect(-4, -4, 8, 10)
+
+  // Arms swinging
+  const swing = Math.sin(time * 10) * 4
+  ctx.fillRect(-6, -2 + swing, 3, 7)
+  ctx.fillRect(3, -2 - swing, 3, 7)
+
+  // Head
+  ctx.fillStyle = COLORS.skin[p]
+  ctx.fillRect(-4, -12, 8, 8)
+
+  // Hair
+  ctx.fillStyle = COLORS.hair[p % COLORS.hair.length]
+  ctx.fillRect(-4, -14, 8, 3)
+  ctx.fillRect(-5, -13, 1, 4)
+  ctx.fillRect(4, -13, 1, 4)
+
+  // Eyes
+  ctx.fillStyle = "#222"
+  ctx.fillRect(-2, -9, 2, 2)
+  ctx.fillRect(1, -9, 2, 2)
+
+  ctx.restore()
+}
+
+function drawParticles(ctx: CanvasRenderingContext2D, particles: Particle[]) {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life)
+    ctx.fillStyle = p.color
+    ctx.fillRect(p.x - 1, p.y - 1, 3, 3)
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawCharacter(ctx: CanvasRenderingContext2D, char: Character, time: number, hovered: boolean) {
+  const x = char.x
+  const y = char.y - char.hop
   const p = char.palette % COLORS.skin.length
   const bobble = char.state === "typing" ? Math.sin(time * 8) * 1 : 0
   const breathe = Math.sin(time * 2) * 0.5
@@ -212,7 +316,12 @@ function drawCharacter(ctx: CanvasRenderingContext2D, char: Character, time: num
   }
 
   // Status indicator
-  if (char.state === "typing") {
+  if (char.state === "celebrating") {
+    ctx.fillStyle = "#44cc88"
+    ctx.font = "bold 10px monospace"
+    ctx.textAlign = "center"
+    ctx.fillText("✓", x, y - 18)
+  } else if (char.state === "typing") {
     // Typing dots animation
     const dots = Math.floor(time * 4) % 4
     ctx.fillStyle = "#88ffaa"

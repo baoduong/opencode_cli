@@ -3,9 +3,9 @@ import { useSync } from "@/context/sync"
 import { useSDK } from "@/context/sdk"
 import { useNavigate, useParams } from "@solidjs/router"
 import { base64Encode } from "@opencode-ai/util/encode"
-import { TILE } from "./engine/sprites"
+import { TILE, WALK_SPEED } from "./engine/sprites"
 import { stateFromTool } from "./engine/sprites"
-import { layout, render, type Agent, type Character, type Office } from "./engine/renderer"
+import { layout, render, spawnParticles, type Agent, type Character, type Office, type Particle } from "./engine/renderer"
 
 export default function OfficePage() {
   const sync = useSync()
@@ -17,6 +17,9 @@ export default function OfficePage() {
   let frame: number
   const [hover, setHover] = createSignal(-1)
   const [scale, setScale] = createSignal(3)
+  let particles: Particle[] = []
+  let prev: Map<string, Agent["status"]> = new Map()
+  let last = Date.now()
 
   // Find active parent session (most recent non-child session with busy children)
   const sessions = createMemo(() => {
@@ -53,33 +56,66 @@ export default function OfficePage() {
   const [chars, setChars] = createSignal<Character[]>([])
   const [office, setOffice] = createSignal<Office>(layout(1))
 
+  function doorPos(off: Office) {
+    return { x: Math.floor(off.width / 2), y: off.height - TILE / 2 }
+  }
+
   createEffect(on(agents, (list) => {
     const count = Math.max(list.length, 1)
     const off = layout(count)
     setOffice(off)
-    setChars(list.map((agent, i) => {
-      const desk = off.desks[i]
-      return {
-        agent,
-        x: desk?.x ?? TILE * 2,
-        y: (desk?.y ?? TILE * 2) + 16,
-        tx: desk?.x ?? TILE * 2,
-        ty: desk?.y ?? TILE * 2,
-        frame: 0,
-        timer: 0,
-        state: agent.status === "busy" ? stateFromTool(agent.tool) : "idle",
-        palette: i,
-      }
-    }))
+    const door = doorPos(off)
+    const time = (Date.now() - start) / 1000
+
+    setChars((existing) => {
+      const ids = new Set(existing.map((c) => c.agent.id))
+      return list.map((agent, i) => {
+        const desk = off.desks[i]
+        const dx = desk?.x ?? TILE * 2
+        const dy = (desk?.y ?? TILE * 2) + 16
+        const old = existing.find((c) => c.agent.id === agent.id)
+        if (old) return { ...old, agent, tx: dx, ty: dy, palette: i }
+        // New character spawns at door and walks to desk
+        return {
+          agent,
+          x: door.x,
+          y: door.y,
+          tx: dx,
+          ty: dy,
+          frame: 0,
+          timer: 0,
+          state: "walking" as const,
+          palette: i,
+          spawn: time,
+          facing: dx > door.x ? 1 : -1,
+          hop: 0,
+        }
+      })
+    })
   }))
 
-  // Update character states reactively
+  // Detect status transitions (busy→idle = celebration)
   createEffect(() => {
     const list = agents()
-    setChars((prev) =>
-      prev.map((c, i) => {
+    setChars((current) =>
+      current.map((c, i) => {
         const agent = list[i]
         if (!agent) return c
+        const was = prev.get(agent.id)
+        const now = agent.status
+
+        if (was === "busy" && now === "idle" && c.state !== "walking") {
+          // Trigger celebration
+          spawnParticles(particles, c.x, c.y)
+          prev.set(agent.id, now)
+          return { ...c, agent, state: "celebrating" as const, timer: 1.0, hop: 0 }
+        }
+
+        prev.set(agent.id, now)
+
+        if (c.state === "celebrating") return { ...c, agent }
+        if (c.state === "walking") return { ...c, agent }
+
         return {
           ...c,
           agent,
@@ -102,8 +138,76 @@ export default function OfficePage() {
     canvas.width = off.width * s
     canvas.height = off.height * s
     ctx.setTransform(s, 0, 0, s, 0, 0)
-    const time = (Date.now() - start) / 1000
-    render(ctx, off, chars(), time, hover(), s)
+    const now = Date.now()
+    const dt = Math.min((now - last) / 1000, 0.05)
+    last = now
+    const time = (now - start) / 1000
+
+    // Lerp character positions and update states
+    setChars((current) =>
+      current.map((c) => {
+        const dx = c.tx - c.x
+        const dy = c.ty - c.y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        const speed = WALK_SPEED * TILE
+
+        // Walking: lerp toward target
+        if (c.state === "walking") {
+          if (dist < 2) {
+            return {
+              ...c,
+              x: c.tx,
+              y: c.ty,
+              state: c.agent.status === "busy" ? stateFromTool(c.agent.tool) : "idle",
+            }
+          }
+          const step = Math.min(speed * dt, dist)
+          return {
+            ...c,
+            x: c.x + (dx / dist) * step,
+            y: c.y + (dy / dist) * step,
+            facing: dx > 0 ? 1 : dx < 0 ? -1 : c.facing,
+          }
+        }
+
+        // Celebrating: bounce hop then return to normal
+        if (c.state === "celebrating") {
+          const remaining = c.timer - dt
+          if (remaining <= 0) {
+            return {
+              ...c,
+              state: c.agent.status === "busy" ? stateFromTool(c.agent.tool) : "idle",
+              timer: 0,
+              hop: 0,
+            }
+          }
+          return {
+            ...c,
+            timer: remaining,
+            hop: Math.abs(Math.sin(remaining * 10)) * 6,
+          }
+        }
+
+        // Settled: snap to desk if close
+        if (dist > 2) {
+          return { ...c, state: "walking" as const, facing: dx > 0 ? 1 : dx < 0 ? -1 : c.facing }
+        }
+        return c
+      }),
+    )
+
+    // Update particles
+    particles = particles
+      .map((p) => ({
+        ...p,
+        x: p.x + p.vx * dt,
+        y: p.y + p.vy * dt,
+        vy: p.vy + 60 * dt,
+        life: p.life - dt,
+      }))
+      .filter((p) => p.life > 0)
+
+    render(ctx, off, chars(), particles, time, hover(), s)
     frame = requestAnimationFrame(loop)
   }
 
