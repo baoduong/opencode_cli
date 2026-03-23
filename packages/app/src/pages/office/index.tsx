@@ -21,35 +21,77 @@ export default function OfficePage() {
   let prev: Map<string, Agent["status"]> = new Map()
   let last = Date.now()
 
-  // Find active parent session (most recent non-child session with busy children)
-  const sessions = createMemo(() => {
-    const all = Object.values(sync.data.session).flat()
-    return all.filter((s: any) => !s.parentID).sort((a: any, b: any) => b.time.updated - a.time.updated)
+  // Fetch ALL sessions (including children) via experimental endpoint, poll for updates
+  const [allSessions, setAllSessions] = createSignal<any[]>([])
+  const poll = async () => {
+    const base = sdk.url
+    const res = await fetch(`${base}/experimental/session?directory=${encodeURIComponent(sdk.directory)}&limit=200`)
+    if (res.ok) setAllSessions(await res.json())
+  }
+  onMount(() => {
+    poll()
+    const interval = setInterval(poll, 3000)
+    onCleanup(() => clearInterval(interval))
   })
 
-  const parent = createMemo(() => sessions()[0])
+  // Merge API-fetched sessions with real-time sync data
+  const merged = createMemo(() => {
+    const synced = Object.values(sync.data.session).flat()
+    const fetched = allSessions()
+    const map = new Map<string, any>()
+    for (const s of fetched) map.set(s.id, s)
+    for (const s of synced) map.set(s.id, s)
+    return [...map.values()]
+  })
 
-  // Child sessions = agents in the office
+  // Find most recently active parent that has children
+  const parent = createMemo(() => {
+    const all = merged()
+    const kids = all.filter((s: any) => s.parentID)
+    if (kids.length === 0) {
+      const roots = all.filter((s: any) => !s.parentID).sort((a: any, b: any) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
+      return roots[0]
+    }
+    const parents = new Map<string, number>()
+    for (const s of kids) {
+      const t = s.time?.updated ?? s.time?.created ?? 0
+      const cur = parents.get(s.parentID) ?? 0
+      if (t > cur) parents.set(s.parentID, t)
+    }
+    let best = ""
+    let latest = 0
+    for (const [id, t] of parents) {
+      if (t > latest) { best = id; latest = t }
+    }
+    return all.find((s: any) => s.id === best)
+  })
+
+  // All sessions as agents: orchestrator first, then children
   const agents = createMemo<Agent[]>(() => {
+    const all = merged()
     const p = parent()
-    if (!p) return []
-    const all = Object.values(sync.data.session).flat()
-    return all
-      .filter((s: any) => s.parentID === p.id)
-      .map((s: any) => {
-        const status = sync.data.session_status?.[s.id]
-        const msgs = sync.data.message?.[s.id] ?? []
-        const parts = msgs.flatMap((m: any) => sync.data.part?.[m.id] ?? [])
-        const tool = parts.findLast((p: any) => p.type === "tool" && (p as any).state?.status === "running") as any
-        return {
-          id: s.id,
-          name: s.title?.replace(/\s*\(@\S+ subagent\)\s*$/, "") ?? "Task",
-          agent: s.title?.match(/@(\S+) subagent/)?.[1] ?? "agent",
-          status: (status?.type ?? "idle") as Agent["status"],
-          tool: tool ? `${tool.tool}${tool.state?.title ? ` ${tool.state.title}` : ""}` : "",
-          duration: (s.time?.updated ?? 0) - (s.time?.created ?? 0),
-        }
-      })
+    const pid = (p as any)?.id
+    const kids = pid ? all.filter((s: any) => s.parentID === pid) : []
+
+    const toAgent = (s: any, orchestrator?: boolean): Agent => {
+      const status = sync.data.session_status?.[s.id]
+      const msgs = sync.data.message?.[s.id] ?? []
+      const parts = msgs.flatMap((m: any) => sync.data.part?.[m.id] ?? [])
+      const tool = parts.findLast((p: any) => p.type === "tool" && (p as any).state?.status === "running") as any
+      return {
+        id: s.id,
+        name: orchestrator ? (s.title ?? "Orchestrator") : (s.title?.replace(/\s*\(@\S+ subagent\)\s*$/, "") ?? "Task"),
+        agent: orchestrator ? "orchestrator" : (s.title?.match(/@(\S+) subagent/)?.[1] ?? "agent"),
+        status: (status?.type ?? "idle") as Agent["status"],
+        tool: tool ? `${tool.tool}${tool.state?.title ? ` ${tool.state.title}` : ""}` : "",
+        duration: (s.time?.updated ?? 0) - (s.time?.created ?? 0),
+      }
+    }
+
+    const result: Agent[] = []
+    if (p) result.push(toAgent(p, true))
+    for (const s of kids) result.push(toAgent(s))
+    return result
   })
 
   // Build office layout and characters
@@ -292,10 +334,48 @@ export default function OfficePage() {
         />
       </div>
 
-      <Show when={agents().length === 0}>
+      <Show when={chars().length === 0}>
         <div class="text-center text-[#666688] font-mono text-sm max-w-md">
           <p>No agents working yet.</p>
           <p class="mt-2 text-xs">Start a session and delegate tasks to sub-agents — they'll appear here as characters in the office.</p>
+          <button
+            class="mt-3 text-xs px-3 py-1.5 rounded bg-[#44cc88] text-[#1a1a2e] hover:bg-[#55dd99] transition-colors font-mono"
+            onClick={() => {
+              const names = ["Exploring codebase", "Running tests", "Writing docs", "Fixing bugs", "Code review", "Deploying"]
+              const tools = ["grep", "bash", "edit", "view", "task", ""]
+              const off = layout(Math.max(chars().length + 1, 2))
+              setOffice(off)
+              const door = doorPos(off)
+              const idx = chars().length
+              const desk = off.desks[idx]
+              setChars((prev) => [
+                ...prev,
+                {
+                  agent: {
+                    id: `test-${idx}`,
+                    name: names[idx % names.length],
+                    agent: "explore",
+                    status: "busy" as const,
+                    tool: tools[idx % tools.length],
+                    duration: 0,
+                  },
+                  x: door.x,
+                  y: door.y,
+                  tx: (desk?.x ?? TILE * 2),
+                  ty: (desk?.y ?? TILE * 2) + 16,
+                  frame: 0,
+                  timer: 0,
+                  state: "walking" as const,
+                  palette: idx,
+                  spawn: (Date.now() - start) / 1000,
+                  facing: (desk?.x ?? TILE * 2) > door.x ? 1 : -1 as 1 | -1,
+                  hop: 0,
+                },
+              ])
+            }}
+          >
+            + Spawn Test Agent
+          </button>
         </div>
       </Show>
 
