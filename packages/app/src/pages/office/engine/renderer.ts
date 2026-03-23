@@ -99,24 +99,22 @@ function sprite(ctx: CanvasRenderingContext2D, el: HTMLImageElement, x: number, 
 
 export function layout(count: number): Office {
   const actual = Math.max(count, 2)
-  const cols = Math.min(actual, 3)
+  const cols = Math.min(actual, 4)
   const rows = Math.ceil(actual / cols)
-  const w = Math.max(cols * 3 + 3, 8)
-  const h = Math.max(rows * 3 + 3, 6)
+  const pad = 3
+  const gap = 3
+  const w = Math.max(cols * gap + pad + 2, 10)
+  const h = Math.max(rows * gap + pad + 3, 8)
   const desks: Desk[] = []
-  const ox = Math.floor((w - cols * 3) / 2) + 1
-  const oy = 2
+  const ox = Math.floor((w - cols * gap) / 2) + 1
+  const oy = 3
   for (let i = 0; i < actual; i++) {
     const col = i % cols
     const row = Math.floor(i / cols)
-    desks.push({ x: (col * 3 + ox) * TILE + TILE / 2, y: (row * 3 + oy) * TILE })
+    desks.push({ x: (col * gap + ox) * TILE + TILE / 2, y: (row * gap + oy) * TILE })
   }
-  const decorations: Office["decorations"] = [
-    { x: TILE + 12, y: (h - 2) * TILE, type: "plant" },
-    { x: (w - 1) * TILE - 12, y: (h - 2) * TILE, type: "coffee" },
-    { x: (w - 1) * TILE - 8, y: TILE + 16, type: "shelf" },
-  ]
-  if (count > 2) decorations.push({ x: TILE + 12, y: TILE + 16, type: "cat" })
+  const decorations: Office["decorations"] = []
+  if (count > 2) decorations.push({ x: TILE * 2, y: (h - 2) * TILE, type: "cat" })
   return { width: w * TILE, height: h * TILE, desks, decorations }
 }
 
@@ -205,7 +203,7 @@ export function render(
 
   // Desks
   for (const desk of office.desks) {
-    const busy = chars.some((c) => c.tx === desk.x && c.ty === desk.y && c.agent.status === "busy")
+    const busy = chars.some((c) => Math.abs(c.tx - desk.x) < 4 && Math.abs(c.ty - desk.y - 16) < 4 && c.agent.status === "busy")
     drawDesk(ctx, desk.x, desk.y, busy)
   }
 
@@ -232,26 +230,26 @@ export function render(
 }
 
 function drawWallDecor(ctx: CanvasRenderingContext2D, w: number, h: number, _time: number) {
-  // Whiteboard on top wall
-  sprite(ctx, WHITEBOARD, TILE + 8, TILE * 2 - 32)
-  // Clock on top wall
-  sprite(ctx, CLOCK, Math.floor(w / 2) - 8, 0)
-  // Painting on top wall
-  sprite(ctx, PAINTING, w - TILE * 3, 0)
-  // Bookshelf against top wall
-  sprite(ctx, BOOKSHELF, TILE * 2 + 8, TILE * 2 - 16)
-  // Plants in corners
-  sprite(ctx, LARGE_PLANT, 4, h - TILE - 48)
-  sprite(ctx, PLANT, w - TILE - 16, TILE * 2)
-  sprite(ctx, CACTUS, w - TILE * 2, h - TILE - 32)
-  // Sofa in break area
-  sprite(ctx, SOFA, TILE * 2, h - TILE - 20)
-  // Coffee table near sofa
-  sprite(ctx, COFFEE_TABLE, TILE * 2 + 36, h - TILE - 36)
-  // Coffee on table
-  sprite(ctx, COFFEE, TILE * 2 + 44, h - TILE - 52)
-  // Bin near door
-  sprite(ctx, BIN, doorX(w) + TILE + 8, h - TILE - 16)
+  // Top wall decorations (on the wall, above desks)
+  sprite(ctx, WHITEBOARD, TILE * 2, TILE * 2 - 32)
+  sprite(ctx, CLOCK, Math.floor(w / 2) - 8, TILE - 16)
+  sprite(ctx, PAINTING, w - TILE * 3, TILE - 16)
+  sprite(ctx, BOOKSHELF, w - TILE * 3, TILE * 2 - 16)
+
+  // Left wall decorations
+  sprite(ctx, LARGE_PLANT, TILE + 4, TILE * 2 + 8)
+
+  // Right wall decorations
+  sprite(ctx, PLANT, w - TILE - 8, TILE * 2 + 8)
+  sprite(ctx, CACTUS, w - TILE - 4, h - TILE * 2 - 16)
+
+  // Bottom area (near door) — break area on the left
+  sprite(ctx, SOFA, TILE + 8, h - TILE - 20)
+  sprite(ctx, COFFEE_TABLE, TILE + 44, h - TILE - 20)
+  sprite(ctx, COFFEE, TILE + 50, h - TILE - 36)
+
+  // Bin near door on the right
+  sprite(ctx, BIN, doorX(w) + TILE + 12, h - TILE - 16)
 }
 
 function doorX(w: number): number {
