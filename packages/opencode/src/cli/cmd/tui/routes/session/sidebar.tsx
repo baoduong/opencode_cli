@@ -11,6 +11,8 @@ import { useKeybind } from "../../context/keybind"
 import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
+import { useRoute } from "@tui/context/route"
+import { Spinner } from "../../component/spinner"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
@@ -25,7 +27,16 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     diff: true,
     todo: true,
     lsp: true,
+    tasks: true,
   })
+
+  const route = useRoute()
+
+  const tasks = createMemo(() =>
+    sync.data.session
+      .filter((s) => s.parentID === props.sessionID)
+      .toSorted((a, b) => b.time.updated - a.time.updated),
+  )
 
   // Sort MCP servers alphabetically for consistent display order
   const mcpEntries = createMemo(() => Object.entries(sync.data.mcp).sort(([a], [b]) => a.localeCompare(b)))
@@ -226,6 +237,77 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                 </box>
                 <Show when={todo().length <= 2 || expanded.todo}>
                   <For each={todo()}>{(todo) => <TodoItem status={todo.status} content={todo.content} />}</For>
+                </Show>
+              </box>
+            </Show>
+            <Show when={tasks().length > 0}>
+              <box>
+                <box
+                  flexDirection="row"
+                  gap={1}
+                  onMouseDown={() => tasks().length > 2 && setExpanded("tasks", !expanded.tasks)}
+                >
+                  <Show when={tasks().length > 2}>
+                    <text fg={theme.text}>{expanded.tasks ? "▼" : "▶"}</text>
+                  </Show>
+                  <text fg={theme.text}>
+                    <b>Tasks</b>
+                    <Show when={!expanded.tasks}>
+                      <span style={{ fg: theme.textMuted }}>
+                        {" "}
+                        ({tasks().filter((t) => sync.data.session_status[t.id]?.type === "busy").length} running,{" "}
+                        {tasks().length} total)
+                      </span>
+                    </Show>
+                  </text>
+                </box>
+                <Show when={tasks().length <= 2 || expanded.tasks}>
+                  <For each={tasks()}>
+                    {(task) => {
+                      const status = createMemo(() => sync.data.session_status[task.id])
+                      const busy = createMemo(() => status()?.type === "busy")
+                      const label = createMemo(() => task.title.replace(/\s*\(@\S+ subagent\)\s*$/, ""))
+                      const agent = createMemo(() => {
+                        const match = task.title.match(/@(\S+) subagent/)
+                        return match?.[1]
+                      })
+                      const duration = createMemo(() => {
+                        if (!task.time.updated || !task.time.created) return ""
+                        if (busy()) return ""
+                        return Locale.duration(task.time.updated - task.time.created)
+                      })
+                      return (
+                        <box
+                          flexDirection="row"
+                          gap={1}
+                          onMouseDown={() =>
+                            route.navigate({ type: "session", sessionID: task.id })
+                          }
+                        >
+                          <Show
+                            when={!busy()}
+                            fallback={<Spinner />}
+                          >
+                            <text
+                              flexShrink={0}
+                              fg={theme.success}
+                            >
+                              •
+                            </text>
+                          </Show>
+                          <text fg={theme.text} wrapMode="none">
+                            {label()}{" "}
+                            <Show when={agent()}>
+                              <span style={{ fg: theme.textMuted }}>@{agent()}</span>
+                            </Show>
+                            <Show when={duration()}>
+                              <span style={{ fg: theme.textMuted }}> · {duration()}</span>
+                            </Show>
+                          </text>
+                        </box>
+                      )
+                    }}
+                  </For>
                 </Show>
               </box>
             </Show>
