@@ -97,6 +97,8 @@ export default function OfficePage() {
   // Build office layout and characters
   const [chars, setChars] = createSignal<Character[]>([])
   const [office, setOffice] = createSignal<Office>(layout(1))
+  const deskMap = new Map<string, number>()
+  let nextDesk = 0
 
   function doorPos(off: Office) {
     return { x: Math.floor(off.width / 2), y: off.height - TILE / 2 }
@@ -109,14 +111,21 @@ export default function OfficePage() {
     const door = doorPos(off)
     const time = (Date.now() - start) / 1000
 
+    // Assign stable desk index per agent ID
+    for (const agent of list) {
+      if (!deskMap.has(agent.id)) {
+        deskMap.set(agent.id, nextDesk++)
+      }
+    }
+
     setChars((existing) => {
-      const ids = new Set(existing.map((c) => c.agent.id))
-      return list.map((agent, i) => {
-        const desk = off.desks[i]
+      return list.map((agent) => {
+        const idx = deskMap.get(agent.id)! % off.desks.length
+        const desk = off.desks[idx]
         const dx = desk?.x ?? TILE * 2
         const dy = (desk?.y ?? TILE * 2) + 16
         const old = existing.find((c) => c.agent.id === agent.id)
-        if (old) return { ...old, agent, tx: dx, ty: dy, palette: i }
+        if (old) return { ...old, agent, tx: dx, ty: dy, palette: idx % 6 }
         // New character spawns at door and walks to desk
         return {
           agent,
@@ -127,7 +136,7 @@ export default function OfficePage() {
           frame: 0,
           timer: 0,
           state: "walking" as const,
-          palette: i,
+          palette: idx % 6,
           spawn: time,
           facing: dx > door.x ? 1 : -1,
           hop: 0,
