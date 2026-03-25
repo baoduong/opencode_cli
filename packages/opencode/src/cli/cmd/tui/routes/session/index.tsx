@@ -7,6 +7,7 @@ import {
   For,
   Match,
   on,
+  onCleanup,
   onMount,
   Show,
   Switch,
@@ -1972,6 +1973,17 @@ function Task(props: ToolProps<typeof TaskTool>) {
 
   const isRunning = createMemo(() => props.part.state.status === "running")
 
+  const [now, setNow] = createSignal(Date.now())
+  const timer = setInterval(() => setNow(Date.now()), 1000)
+  onCleanup(() => clearInterval(timer))
+
+  const elapsed = createMemo(() => {
+    if (!isRunning()) return ""
+    const first = messages().find((x) => x.role === "user")?.time.created
+    if (!first) return ""
+    return Locale.duration(now() - first)
+  })
+
   const duration = createMemo(() => {
     const first = messages().find((x) => x.role === "user")?.time.created
     const assistant = messages().findLast((x) => x.role === "assistant")?.time.completed
@@ -1979,18 +1991,49 @@ function Task(props: ToolProps<typeof TaskTool>) {
     return assistant - first
   })
 
+  const taskCost = createMemo(() =>
+    messages().reduce((sum, x) => sum + (x.role === "assistant" ? (x as AssistantMessage).cost : 0), 0),
+  )
+
+  const taskTokens = createMemo(() => {
+    const last = messages().findLast(
+      (x) => x.role === "assistant" && (x as AssistantMessage).tokens.output > 0,
+    ) as AssistantMessage | undefined
+    if (!last) return 0
+    return (
+      last.tokens.input +
+      last.tokens.output +
+      last.tokens.reasoning +
+      last.tokens.cache.read +
+      last.tokens.cache.write
+    )
+  })
+
   const content = createMemo(() => {
     if (!props.input.description) return ""
-    let content = [`${Locale.titlecase(props.input.subagent_type ?? "General")} Task — ${props.input.description}`]
+    let header = `Task ${props.input.description}`
+
+    if (isRunning()) {
+      const parts = []
+      if (tools().length > 0) parts.push(`${tools().length} tools`)
+      if (elapsed()) parts.push(elapsed())
+      if (taskTokens() > 0) parts.push(`${taskTokens().toLocaleString()}tk`)
+      if (parts.length) header += ` · ${parts.join(" · ")}`
+    }
+
+    let content = [header]
 
     if (isRunning() && tools().length > 0) {
-      // content[0] += ` · ${tools().length} toolcalls`
       if (current()) content.push(`↳ ${Locale.titlecase(current()!.tool)} ${(current()!.state as any).title}`)
       else content.push(`↳ ${tools().length} toolcalls`)
     }
 
     if (props.part.state.status === "completed") {
-      content.push(`└ ${tools().length} toolcalls · ${Locale.duration(duration())}`)
+      const parts = [`${tools().length} toolcalls`, Locale.duration(duration())]
+      if (taskTokens() > 0) parts.push(`${taskTokens().toLocaleString()}tk`)
+      const c = taskCost()
+      if (c > 0) parts.push(c < 0.01 ? "<$0.01" : `$${c.toFixed(2)}`)
+      content.push(`└ ${parts.join(" · ")}`)
     }
 
     return content.join("\n")

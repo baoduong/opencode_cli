@@ -10,6 +10,7 @@ import { PermissionTable } from "@/session/session.sql"
 import { Database, eq } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Wildcard } from "@/util/wildcard"
+import { Plugin } from "@/plugin"
 import { Deferred, Effect, Layer, Schema, ServiceMap } from "effect"
 import os from "os"
 import z from "zod"
@@ -181,6 +182,27 @@ export namespace Permission {
         }
 
         if (!needsAsk) return
+
+        // Allow plugins to override the permission decision
+        const hook = yield* Effect.promise(() =>
+          Plugin.trigger(
+            "permission.ask",
+            {
+              id: request.id ?? PermissionID.ascending(),
+              ...request,
+            },
+            { status: "ask" as "ask" | "deny" | "allow" },
+          ),
+        )
+        if (hook.status === "allow") {
+          log.info("plugin allowed", { permission: request.permission, patterns: request.patterns })
+          return
+        }
+        if (hook.status === "deny") {
+          return yield* new DeniedError({
+            ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
+          })
+        }
 
         const id = request.id ?? PermissionID.ascending()
         const info: Request = {
